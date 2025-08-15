@@ -17,32 +17,21 @@ def normalize_name(s: str) -> str:
            " s. de r.l", " s de rl", " s de r l", " s. de r. l."]
     for r in rep: s = s.replace(r, " ")
     for ch in ",.-_/&()": s = s.replace(ch, " ")
-    s = re.sub(r"\s+", " ", s).strip()
-    return s
+    return re.sub(r"\s+", " ", s).strip()
 
 RFC_RE = re.compile(r"^[A-Z&Ñ]{3,4}\d{6}[A-Z0-9]{2,3}$", re.IGNORECASE)
 
 def split_proveedor(raw: str):
-    """
-    Intenta extraer RFC al inicio y limpia folios 'F-' etc del final.
-    Devuelve (rfc_guess, nombre_limpio, key_agrupacion).
-    """
     if not raw: return "", "", ""
     s = " ".join(str(raw).split())
     parts = s.split()
     rfc_guess = ""
     nombre = s
-
-    if parts and RFC_RE.match(parts[0]):  # RFC al inicio
+    if parts and RFC_RE.match(parts[0]):
         rfc_guess = parts[0].upper()
         nombre = " ".join(parts[1:]) if len(parts) > 1 else ""
-
-    # corta lo posterior a patrones de folio (F-, F , FOLIO, FACT, etc.)
     nombre = re.split(r"\b(F-?|FOLIO|FACT(URA)?|#)\b", nombre, maxsplit=1, flags=re.IGNORECASE)[0]
-    nombre = nombre.strip()
-    if not nombre and rfc_guess:  # por si sólo venía RFC
-        nombre = rfc_guess
-
+    nombre = nombre.strip() or rfc_guess
     key = rfc_guess or normalize_name(nombre)
     return rfc_guess, nombre, key
 
@@ -50,8 +39,7 @@ def to_num(x):
     if x is None: return 0.0
     if isinstance(x, (int, float)): return float(x)
     s = str(x).strip().replace("$", "").replace(",", "")
-    if s.startswith("(") and s.endswith(")"):
-        s = "-" + s[1:-1]
+    if s.startswith("(") and s.endswith(")"): s = "-" + s[1:-1]
     try: return float(s)
     except: return 0.0
 
@@ -62,8 +50,7 @@ def ym(s):
         try:
             d = datetime.strptime(s, fmt)
             return f"{d.year:04d}-{d.month:02d}"
-        except:
-            pass
+        except: pass
     return s[:7] if len(s) >= 7 else ""
 
 def completar_iva(base16, iva16, total, subtotal=None, iva_suelto=None):
@@ -75,11 +62,8 @@ def completar_iva(base16, iva16, total, subtotal=None, iva_suelto=None):
         if not base16 and iva16: base16 = round(iva16 / 0.16, 2)
         return round(base16, 2), round(iva16, 2)
 
-    if subtotal and iva_suelto:
-        return round(subtotal, 2), round(iva_suelto, 2)
-
-    if iva_suelto and not subtotal:
-        return round(iva_suelto / 0.16, 2), round(iva_suelto, 2)
+    if subtotal and iva_suelto: return round(subtotal, 2), round(iva_suelto, 2)
+    if iva_suelto and not subtotal: return round(iva_suelto/0.16, 2), round(iva_suelto, 2)
 
     if total:
         b = total / 1.16
@@ -91,8 +75,7 @@ def completar_iva(base16, iva16, total, subtotal=None, iva_suelto=None):
 def load_catalog(path):
     try:
         if not os.path.isfile(path) or os.path.getsize(path) == 0: return []
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        with open(path, "r", encoding="utf-8") as f: data = json.load(f)
         out = []
         for p in data:
             out.append({
@@ -103,8 +86,7 @@ def load_catalog(path):
                 "tipoOperacion": p.get("tipoOperacion") or "85",
             })
         return out
-    except:
-        return []
+    except: return []
 
 def save_catalog(path, catalog):
     with open(path, "w", encoding="utf-8") as f:
@@ -124,10 +106,8 @@ def upsert_catalog_fields(catalog, rfc, nombre_original=None, alias_to_add=None,
     hit = next((p for p in catalog if p["rfc"] == rfc), None)
     if hit:
         a = normalize_name(alias_to_add or "")
-        if a and a not in hit["aliases"]:
-            hit["aliases"].append(a)
-        if nombre_original and not hit.get("nombre_legal"):
-            hit["nombre_legal"] = nombre_original
+        if a and a not in hit["aliases"]: hit["aliases"].append(a)
+        if nombre_original and not hit.get("nombre_legal"): hit["nombre_legal"] = nombre_original
         if tipoTercero: hit["tipoTercero"] = tipoTercero
         if tipoOperacion: hit["tipoOperacion"] = tipoOperacion
         return
@@ -175,9 +155,12 @@ def is_cancelled(estatus):
     return s in ("cancelado","cancelada","canc","cnl","anulado","anulada")
 
 # ---------- procesamiento ----------
-def process_csv(csv_path, catalog, periodo, progress_callback=None):
-    accum = {}          # rfc_final -> acumulados
-    pendientes = {}     # key -> {"nombre":..., "monto": float}
+def process_csv(csv_path, catalog, periodo, debe_mode="total", progress_callback=None):
+    """
+    debe_mode: "total" -> Debe es total con IVA; "iva" -> Debe es solo IVA
+    """
+    accum = {}
+    pendientes = {}
     egresos_contados = 0
 
     with open(csv_path, "r", encoding="utf-8", errors="replace", newline="") as f:
@@ -193,43 +176,36 @@ def process_csv(csv_path, catalog, periodo, progress_callback=None):
         # encabezado
         raw_rows, header_row = [], None
         for _ in range(50):
-            try:
-                r = next(reader)
-            except StopIteration:
-                break
+            try: r = next(reader)
+            except StopIteration: break
             raw_rows.append(r)
             low = [c.strip().lower() for c in r]
             if any(k in low for k in ("concepto","proveedor","nombre","nombreproveedor")) and \
                any(k in low for k in ("debe","total","subtotal","iva","haber","base16","base 16")):
-                header_row = r
-                break
+                header_row = r; break
         if header_row is None:
             header_row = next((r for r in raw_rows if any(c.strip() for c in r)), [])
         headers = [h.strip() for h in header_row]
-        if not headers:
-            raise RuntimeError("No se encontró encabezado en el CSV.")
+        if not headers: raise RuntimeError("No se encontró encabezado en el CSV.")
 
         H = build_header_map(headers)
-        if not H["Proveedor"]:
-            raise RuntimeError("No se encontró la columna Proveedor/Nombre en el CSV.")
+        if not H["Proveedor"]: raise RuntimeError("No se encontró la columna Proveedor/Nombre en el CSV.")
         idx = {h:i for i,h in enumerate(headers)}
 
         if DEBUG:
             msg = [f"Delimitador: '{delim}'",
                    f"Headers ({len(headers)}): {headers}",
                    "Mapeo:", *[f"  {k}: {H[k]}" for k in H],
-                   f"Periodo: {periodo}"]
+                   f"Periodo: {periodo}", f"Modo Debe: {debe_mode}"]
             messagebox.showinfo("DEBUG", "\n".join(msg))
 
         total_leidas = 0
         incluidas = 0
 
         for i, row in enumerate(reader, start=1):
-            if not row or not any(str(x).strip() for x in row):
-                continue
+            if not row or not any(str(x).strip() for x in row): continue
             total_leidas += 1
-            if progress_callback and i % 2500 == 0:
-                progress_callback(i)
+            if progress_callback and i % 2500 == 0: progress_callback(i)
 
             def g(key):
                 col = H.get(key)
@@ -238,34 +214,25 @@ def process_csv(csv_path, catalog, periodo, progress_callback=None):
                 if j is None or j >= len(row): return ""
                 return row[j]
 
-            # criterios de egreso
             tipo_val = g("Tipo")
             deb = to_num(g("Debe")); hab = to_num(g("Haber"))
             es_egreso_tipo = looks_egreso(tipo_val) if H.get("Tipo") else False
             es_egreso_mov  = (deb > 0 and hab == 0)
-            if not (es_egreso_tipo or es_egreso_mov):  # sólo cargos
-                continue
-            if is_cancelled(g("Estatus")):
-                continue
+            if not (es_egreso_tipo or es_egreso_mov): continue
+            if is_cancelled(g("Estatus")): continue
 
-            # filtro por mes (si hay fecha)
             metodo = (g("Metodo") or "").strip().upper()
             fecha  = g("FechaPago") if metodo == "PPD" else g("FechaCFDI")
             ym_fecha = ym(fecha)
-            if (H.get("FechaCFDI") is None and H.get("FechaPago") is None) or not ym_fecha:
-                pasa_mes = True
-            else:
-                pasa_mes = (ym_fecha == periodo)
+            pasa_mes = True if ((H.get("FechaCFDI") is None and H.get("FechaPago") is None) or not ym_fecha) else (ym_fecha == periodo)
             if not pasa_mes: continue
 
-            # proveedor
             proveedor_raw = (g("Proveedor") or "").strip()
             rfc_col = (g("RFC") or "").strip().upper()
             rfc_guess, nombre_guess, key_group = split_proveedor(proveedor_raw)
             rfc_orig = rfc_col or rfc_guess
             nombre_prov = nombre_guess or proveedor_raw
 
-            # importes
             base0    = to_num(g("Base0"))
             exento   = to_num(g("Exento"))
             base16   = to_num(g("Base16"))
@@ -274,12 +241,15 @@ def process_csv(csv_path, catalog, periodo, progress_callback=None):
             subtotal = to_num(g("SubTotal"))
             iva_sue  = to_num(g("IVA"))
 
+            # --- modo Debe ---
             if total == 0 and subtotal == 0 and deb > 0:
-                total = deb
+                if debe_mode == "total":
+                    total = deb
+                else:  # "iva"
+                    iva_sue = deb
 
             base16, iva16 = completar_iva(base16, iva16, total, subtotal, iva_sue)
 
-            # buscar catálogo
             provCat = find_in_catalog(catalog, nombre_prov, rfc_orig)
             if provCat:
                 rfc_final = provCat["rfc"]
@@ -287,17 +257,15 @@ def process_csv(csv_path, catalog, periodo, progress_callback=None):
                 tipoTercero = provCat["tipoTercero"] or "04"
                 tipoOperacion = provCat["tipoOperacion"] or "85"
             else:
-                # acumula en pendientes por clave (RFC si viene, si no, nombre normalizado)
                 if key_group:
                     item = pendientes.get(key_group, {"nombre": nombre_prov, "monto": 0.0})
-                    item["monto"] += (total if total else deb)
+                    item["monto"] += (total if total else (base16 + iva16))
                     pendientes[key_group] = item
                 rfc_final = "SINRFC"
                 nombre_final = nombre_prov
                 tipoTercero = "04"
                 tipoOperacion = "85"
 
-            # agrupación por RFC
             a = accum.get(rfc_final)
             if not a:
                 a = {"RFC": rfc_final, "Nombre": nombre_final,
@@ -316,20 +284,13 @@ def process_csv(csv_path, catalog, periodo, progress_callback=None):
                                 f"Incluidas (mes/criterios): {incluidas}\n"
                                 f"En acumulador (incluye SINRFC): {len(accum)}")
 
-    # salida
     out_rows, sB16, sIVA, sB0, sEX = [], 0.0, 0.0, 0.0, 0.0
     for k, v in accum.items():
-        if k == "SINRFC":  # pendientes no van a DIOT final
-            continue
-        r = {
-            "RFC": v["RFC"], "Nombre": v["Nombre"],
-            "Base16": round(v["Base16"], 2),
-            "IVA16":  round(v["IVA16"], 2),
-            "Base0":  round(v["Base0"], 2),
-            "BaseExento": round(v["Exento"], 2),
-            "TipoTercero": v["TipoTercero"],
-            "TipoOperacion": v["TipoOperacion"],
-        }
+        if k == "SINRFC": continue
+        r = {"RFC": v["RFC"], "Nombre": v["Nombre"],
+             "Base16": round(v["Base16"], 2), "IVA16": round(v["IVA16"], 2),
+             "Base0": round(v["Base0"], 2), "BaseExento": round(v["Exento"], 2),
+             "TipoTercero": v["TipoTercero"], "TipoOperacion": v["TipoOperacion"]}
         sB16 += r["Base16"]; sIVA += r["IVA16"]; sB0 += r["Base0"]; sEX += r["BaseExento"]
         out_rows.append(r)
 
@@ -343,12 +304,10 @@ def export_diot_csv(path, rows):
         w = csv.writer(f)
         w.writerow(["RFC","Nombre","Base16","IVA16","Base0","BaseExento","TipoTercero","TipoOperacion"])
         for r in rows:
-            w.writerow([
-                r["RFC"], r["Nombre"],
-                f'{r["Base16"]:.2f}', f'{r["IVA16"]:.2f}',
-                f'{r["Base0"]:.2f}', f'{r["BaseExento"]:.2f}',
-                r["TipoTercero"], r["TipoOperacion"]
-            ])
+            w.writerow([r["RFC"], r["Nombre"],
+                        f'{r["Base16"]:.2f}', f'{r["IVA16"]:.2f}',
+                        f'{r["Base0"]:.2f}', f'{r["BaseExento"]:.2f}',
+                        r["TipoTercero"], r["TipoOperacion"]])
 
 def export_pendientes_csv(path, pendientes):
     with open(path, "w", encoding="utf-8", newline="") as f:
@@ -358,26 +317,20 @@ def export_pendientes_csv(path, pendientes):
             w.writerow([item["nombre"], f'{item["monto"]:.2f}', ""])
 
 # ---------- UI ----------
-TERCEROS = [
-    ("04","04 - Proveedor nacional"),
-    ("05","05 - Proveedor extranjero"),
-    ("15","15 - Globales*"),
-]
-
-OPERACIONES = [
-    ("85","85 - Otros"),
-    ("03","03 - Prestacion de servicios"),
-    ("06","06 - Uso o goce temporal de bienes"),
-]
+TERCEROS=[("04","04 - Proveedor nacional"),("05","05 - Proveedor extranjero"),("15","15 - Globales*")]
+OPERACIONES=[("85","85 - Otros"),("03","03 - Prestacion de servicios"),("06","06 - Uso o goce temporal de bienes")]
 
 class DIOTApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("DIOT – Procesador CSV + Catálogo (debug)")
-        self.geometry("1100x650"); self.minsize(980, 600)
+        self.geometry("1150x680"); self.minsize(1000, 620)
+
         self.csv_path = tk.StringVar()
         self.json_path = tk.StringVar()
         self.periodo = tk.StringVar(value=datetime.now().strftime("%Y-%m"))
+        self.debe_mode = tk.StringVar(value="total")  # modo de interpretación del Debe
+
         self.catalog, self.result_rows = [], []
         self.pendientes, self.totals = {}, {}
         self._build_ui()
@@ -386,21 +339,26 @@ class DIOTApp(tk.Tk):
         frmTop = ttk.Frame(self, padding=10); frmTop.pack(fill="x")
 
         ttk.Label(frmTop, text="CSV (COI):").grid(row=0, column=0, sticky="w")
-        ttk.Entry(frmTop, textvariable=self.csv_path, width=70).grid(row=0, column=1, padx=5, sticky="we")
-        ttk.Button(frmTop, text="Buscar…", command=self.pick_csv).grid(row=0, column=2)
+        ttk.Entry(frmTop, textvariable=self.csv_path, width=60).grid(row=0, column=1, padx=5, sticky="we")
+        ttk.Button(frmTop, text="Buscar…", command=self.pick_csv).grid(row=0, column=2, padx=(4,10))
 
         ttk.Label(frmTop, text="Catálogo JSON:").grid(row=1, column=0, sticky="w", pady=(6,0))
-        ttk.Entry(frmTop, textvariable=self.json_path, width=70).grid(row=1, column=1, padx=5, sticky="we", pady=(6,0))
-        ttk.Button(frmTop, text="Buscar…", command=self.pick_json).grid(row=1, column=2, pady=(6,0))
+        ttk.Entry(frmTop, textvariable=self.json_path, width=60).grid(row=1, column=1, padx=5, sticky="we", pady=(6,0))
+        ttk.Button(frmTop, text="Buscar…", command=self.pick_json).grid(row=1, column=2, padx=(4,10), pady=(6,0))
 
-        ttk.Label(frmTop, text="Mes (AAAA-MM):").grid(row=0, column=3, padx=(15,5))
+        ttk.Label(frmTop, text="Mes (AAAA-MM):").grid(row=0, column=3, padx=(10,5))
         ttk.Entry(frmTop, textvariable=self.periodo, width=10).grid(row=0, column=4)
 
-        ttk.Button(frmTop, text="Procesar", command=self.run_process).grid(row=1, column=3, columnspan=2, padx=(15,0))
+        # Selector de modo Debe
+        box = ttk.LabelFrame(frmTop, text="Interpretación de 'Debe'")
+        box.grid(row=1, column=3, columnspan=2, padx=(10,0), sticky="w")
+        ttk.Radiobutton(box, text="Total con IVA (estándar)", variable=self.debe_mode, value="total").grid(row=0, column=0, sticky="w")
+        ttk.Radiobutton(box, text="Solo IVA", variable=self.debe_mode, value="iva").grid(row=1, column=0, sticky="w")
+
+        ttk.Button(frmTop, text="Procesar", command=self.run_process).grid(row=0, column=5, rowspan=2, padx=(12,0))
 
         frmMid = ttk.Frame(self, padding=(10,0,10,10)); frmMid.pack(fill="both", expand=True)
 
-        # izquierda: DIOT
         left = ttk.Frame(frmMid); left.pack(side="left", fill="both", expand=True)
         ttk.Label(left, text="DIOT agrupado por RFC").pack(anchor="w")
 
@@ -417,10 +375,12 @@ class DIOTApp(tk.Tk):
 
         frmBtns = ttk.Frame(left); frmBtns.pack(anchor="w", pady=(0,8))
         ttk.Button(frmBtns, text="Exportar DIOT.csv", command=self.save_diot, state="disabled").pack(side="left", padx=(0,6))
-        ttk.Button(frmBtns, text="Guardar catálogo actualizado", command=self.save_catalog_json, state="disabled").pack(side="left", padx=(0,6))
+        # guardo referencia y empiezo disabled, la activamos tras procesar
+        self.btn_save_catalog = ttk.Button(frmBtns, text="Guardar catálogo actualizado",
+                                           command=self.save_catalog_json, state="disabled")
+        self.btn_save_catalog.pack(side="left", padx=(0,6))
         ttk.Button(frmBtns, text="Exportar pendientes.csv", command=self.save_pendientes, state="disabled").pack(side="left")
 
-        # derecha: pendientes y editor
         right = ttk.Frame(frmMid, width=360); right.pack(side="left", fill="y", padx=(10,0))
 
         ed = ttk.LabelFrame(right, text="Editar proveedor seleccionado"); ed.pack(fill="x", pady=(0,8))
@@ -435,22 +395,18 @@ class DIOTApp(tk.Tk):
 
         frmEd2 = ttk.Frame(ed, padding=6); frmEd2.pack(fill="x")
         ttk.Label(frmEd2, text="TipoTercero:").grid(row=0, column=0, sticky="w")
-        self.cmbT = ttk.Combobox(frmEd2, textvariable=self.ed_tipoT,
-                                 values=[x for x,_ in TERCEROS], state="normal", width=6)
-        self.cmbT.grid(row=0, column=1, sticky="w")
-        ttk.Label(frmEd2, text="(04 Nac | 05 Ext)").grid(row=0, column=2, padx=4)
-
+        self.cmbT = ttk.Combobox(frmEd2, textvariable=self.ed_tipoT, values=[x for x,_ in TERCEROS], state="normal", width=6)
+        self.cmbT.grid(row=0, column=1, sticky="w"); ttk.Label(frmEd2, text="(04 Nac | 05 Ext)").grid(row=0, column=2, padx=4)
         ttk.Label(frmEd2, text="TipoOperacion:").grid(row=1, column=0, sticky="w", pady=(4,0))
-        self.cmbO = ttk.Combobox(frmEd2, textvariable=self.ed_tipoO,
-                                 values=[x for x,_ in OPERACIONES], state="normal", width=6)
+        self.cmbO = ttk.Combobox(frmEd2, textvariable=self.ed_tipoO, values=[x for x,_ in OPERACIONES], state="normal", width=6)
         self.cmbO.grid(row=1, column=1, sticky="w", pady=(4,0))
         ttk.Label(frmEd2, text="(85 otros, 03 serv, 06 goce)").grid(row=1, column=2, padx=4, pady=(4,0))
 
         frmEdBtns = ttk.Frame(ed, padding=6); frmEdBtns.pack(fill="x")
-        ttk.Button(frmEdBtns, text="Guardar tipos en catálogo",
-                   command=self.save_types_to_catalog, state="disabled").pack(side="left")
-        ttk.Button(frmEdBtns, text="Reprocesar",
-                   command=self.run_process, state="disabled").pack(side="left", padx=6)
+        self.btn_save_types = ttk.Button(frmEdBtns, text="Guardar tipos en catálogo",
+                                         command=self.save_types_to_catalog, state="disabled")
+        self.btn_save_types.pack(side="left")
+        ttk.Button(frmEdBtns, text="Reprocesar", command=self.run_process).pack(side="left", padx=6)
 
         pend = ttk.LabelFrame(right, text="Pendientes (capturar RFC)"); pend.pack(fill="both", expand=True)
         self.treePend = ttk.Treeview(pend, columns=("Proveedor","Total"), show="headings", height=10)
@@ -461,56 +417,44 @@ class DIOTApp(tk.Tk):
         self.treePend.pack(fill="both", expand=True, pady=(4,4))
 
         frmP = ttk.Frame(pend); frmP.pack(anchor="w", pady=(0,6))
-        ttk.Button(frmP, text="Agregar RFC…", command=self.add_rfc_to_selected, state="disabled").pack(side="left", padx=(0,6))
-        ttk.Button(frmP, text="Reprocesar", command=self.run_process, state="disabled").pack(side="left")
+        self.btn_add_rfc = ttk.Button(frmP, text="Agregar RFC…", command=self.add_rfc_to_selected, state="disabled")
+        self.btn_add_rfc.pack(side="left", padx=(0,6))
+        # NUEVO: botón Eliminar pendiente
+        self.btn_delete_pend = ttk.Button(frmP, text="Eliminar", command=self.delete_selected_pending, state="disabled")
+        self.btn_delete_pend.pack(side="left", padx=(0,6))
+        ttk.Button(frmP, text="Reprocesar", command=self.run_process).pack(side="left")
 
-        # refs
-        self.btn_export_diot = frmBtns.winfo_children()[0]
-        self.btn_save_catalog = frmBtns.winfo_children()[1]
-        self.btn_export_pend = frmBtns.winfo_children()[2]
-        self.btn_save_types = frmEdBtns.winfo_children()[0]
-        self.btn_reprocess_types = frmEdBtns.winfo_children()[1]
-        self.btn_add_rfc = frmP.winfo_children()[0]
-        self.btn_reprocess_pend = frmP.winfo_children()[1]
+        # Habilitar/Deshabilitar según selección en pendientes
+        self.treePend.bind("<<TreeviewSelect>>", self.on_select_pending)
 
         self.status = ttk.Label(self, text="Listo.", anchor="w"); self.status.pack(fill="x")
 
     def pick_csv(self):
-        p = filedialog.askopenfilename(title="Selecciona CSV del COI",
-                                       filetypes=[("CSV","*.csv"),("Todos","*.*")])
+        p = filedialog.askopenfilename(title="Selecciona CSV del COI", filetypes=[("CSV","*.csv"),("Todos","*.*")])
         if p: self.csv_path.set(p)
 
     def pick_json(self):
-        p = filedialog.askopenfilename(title="Selecciona catálogo JSON",
-                                       filetypes=[("JSON","*.json"),("Todos","*.*")])
+        p = filedialog.askopenfilename(title="Selecciona catálogo JSON", filetypes=[("JSON","*.json"),("Todos","*.*")])
         if p:
-            self.json_path.set(p)
-            self.catalog = load_catalog(p)
-            message = (f"Cargado catálogo con {len(self.catalog)} proveedores."
-                       if self.catalog else
-                       "Archivo vacío o inválido. Continuarás con catálogo vacío.")
-            messagebox.showinfo("Catálogo", message)
+            self.json_path.set(p); self.catalog = load_catalog(p)
+            msg = f"Cargado catálogo con {len(self.catalog)} proveedores." if self.catalog else "Archivo vacío o inválido. Continuarás con catálogo vacío."
+            messagebox.showinfo("Catálogo", msg)
 
-    def set_status(self, t):
-        self.status.config(text=t); self.update_idletasks()
+    def set_status(self, t): self.status.config(text=t); self.update_idletasks()
 
     def run_process(self):
         csvp = self.csv_path.get().strip()
         jsonp = self.json_path.get().strip()
         periodo = self.periodo.get().strip()
-
-        if not os.path.isfile(csvp):
-            messagebox.showerror("CSV", "Selecciona un CSV válido."); return
-        if jsonp and not self.catalog:
-            self.catalog = load_catalog(jsonp)
+        if not os.path.isfile(csvp): messagebox.showerror("CSV","Selecciona un CSV válido."); return
+        if jsonp and not self.catalog: self.catalog = load_catalog(jsonp)
 
         self.set_status("Procesando CSV…")
-        self.tree.delete(*self.tree.get_children())
-        self.treePend.delete(*self.treePend.get_children())
+        self.tree.delete(*self.tree.get_children()); self.treePend.delete(*self.treePend.get_children())
 
         try:
             rows, pendientes, totals = process_csv(
-                csvp, self.catalog, periodo,
+                csvp, self.catalog, periodo, debe_mode=self.debe_mode.get(),
                 progress_callback=lambda i: self.set_status(f"Procesando filas… {i:,}")
             )
         except Exception as e:
@@ -519,83 +463,111 @@ class DIOTApp(tk.Tk):
         self.result_rows, self.pendientes, self.totals = rows, pendientes, totals
 
         for r in rows:
-            self.tree.insert("", "end", values=(
-                r["RFC"], r["Nombre"],
-                f'{r["Base16"]:.2f}', f'{r["IVA16"]:.2f}',
-                f'{r["Base0"]:.2f}', f'{r["BaseExento"]:.2f}',
-                r["TipoTercero"], r["TipoOperacion"]
-            ))
+            self.tree.insert("", "end", values=(r["RFC"], r["Nombre"],
+                f'{r["Base16"]:.2f}', f'{r["IVA16"]:.2f}', f'{r["Base0"]:.2f}',
+                f'{r["BaseExento"]:.2f}', r["TipoTercero"], r["TipoOperacion"]))
 
         for _, item in sorted(pendientes.items(), key=lambda kv: kv[1]["nombre"]):
             self.treePend.insert("", "end", values=(item["nombre"], f'{item["monto"]:.2f}'))
 
-        self.lblTotals.config(
-            text=(f"Totales: Base16 {totals['Base16']:.2f} | IVA16 {totals['IVA16']:.2f} | "
-                  f"Base0 {totals['Base0']:.2f} | Exento {totals['Exento']:.2f}  "
-                  f"(Egresos incluidos: {totals['Egresos']:,})")
-        )
+        self.lblTotals.config(text=(f"Totales: Base16 {totals['Base16']:.2f} | IVA16 {totals['IVA16']:.2f} | "
+                                    f"Base0 {totals['Base0']:.2f} | Exento {totals['Exento']:.2f}  "
+                                    f"(Egresos incluidos: {totals['Egresos']:,})"))
 
-        self.btn_export_diot.config(state=("normal" if rows else "disabled"))
+        # habilitaciones
+        has_rows = bool(rows)
+        if has_rows:
+            self.btn_save_types.config(state="normal")
         self.btn_save_catalog.config(state="normal")
-        self.btn_export_pend.config(state=("normal" if pendientes else "disabled"))
         self.btn_add_rfc.config(state=("normal" if pendientes else "disabled"))
-        self.btn_reprocess_pend.config(state="normal")
-        self.btn_save_types.config(state="disabled")
-        self.btn_reprocess_types.config(state="disabled")
-        self.ed_rfc.set(""); self.ed_nombre.set("")
+        # el botón eliminar arranca deshabilitado hasta seleccionar
+        self.btn_delete_pend.config(state="disabled")
+
         self.set_status(f"Listo. RFC en DIOT: {len(rows)} | Pendientes: {len(pendientes)}")
 
     def on_select_row(self, _evt):
         sel = self.tree.selection()
-        if not sel:
-            self.ed_rfc.set(""); self.ed_nombre.set("")
-            self.btn_save_types.config(state="disabled")
-            self.btn_reprocess_types.config(state="disabled")
-            return
+        if not sel: return
         rfc, nombre, *_rest, tipoT, tipoO = self.tree.item(sel[0], "values")
-        self.ed_rfc.set(rfc); self.ed_nombre.set(nombre)
-        self.ed_tipoT.set(tipoT); self.ed_tipoO.set(tipoO)
+        self.ed_rfc.set(rfc); self.ed_nombre.set(nombre); self.ed_tipoT.set(tipoT); self.ed_tipoO.set(tipoO)
         self.btn_save_types.config(state="normal")
-        self.btn_reprocess_types.config(state="normal")
+
+    def on_select_pending(self, _evt):
+        """Habilita acciones cuando hay un pendiente seleccionado."""
+        sel = self.treePend.selection()
+        has_sel = bool(sel)
+        self.btn_add_rfc.config(state=("normal" if has_sel else "disabled"))
+        self.btn_delete_pend.config(state=("normal" if has_sel else "disabled"))
+
+    def _remove_pending_by_nombre(self, nombre: str):
+        """Quita un pendiente por nombre del diccionario interno."""
+        key_to_delete = None
+        for k, v in self.pendientes.items():
+            if v.get("nombre") == nombre:
+                key_to_delete = k
+                break
+        if key_to_delete is not None:
+            self.pendientes.pop(key_to_delete, None)
+
+    def delete_selected_pending(self):
+        """Elimina el pendiente seleccionado (solo de la lista y memoria local)."""
+        sel = self.treePend.selection()
+        if not sel:
+            messagebox.showinfo("Pendientes", "Selecciona un proveedor para eliminar.")
+            return
+        nombre = self.treePend.item(sel[0], "values")[0]
+        if not messagebox.askyesno("Eliminar pendiente",
+                                   f"¿Eliminar '{nombre}' de la lista de pendientes?\n"
+                                   "Nota: esto NO afecta el CSV original ni el catálogo."):
+            return
+        # quita de UI y de estructura interna
+        self.treePend.delete(sel[0])
+        self._remove_pending_by_nombre(nombre)
+
+        # si ya no quedan pendientes, deshabilita botones
+        if not self.treePend.get_children():
+            self.btn_add_rfc.config(state="disabled")
+            self.btn_delete_pend.config(state="disabled")
 
     def save_types_to_catalog(self):
-        rfc = self.ed_rfc.get().strip()
-        nombre = self.ed_nombre.get().strip()
+        rfc=self.ed_rfc.get().strip(); nombre=self.ed_nombre.get().strip()
         if not rfc: return
-        upsert_catalog_fields(self.catalog, rfc,
-                              nombre_original=nombre, alias_to_add=nombre,
-                              tipoTercero=self.ed_tipoT.get().strip(),
-                              tipoOperacion=self.ed_tipoO.get().strip())
-        messagebox.showinfo("Catálogo",
-                            f"Tipos guardados para {rfc}. (Recuerda guardar el catálogo y/o reprocesar)")
+        upsert_catalog_fields(self.catalog, rfc, nombre_original=nombre, alias_to_add=nombre,
+                              tipoTercero=self.ed_tipoT.get().strip(), tipoOperacion=self.ed_tipoO.get().strip())
+        self.btn_save_catalog.config(state="normal")
+        messagebox.showinfo("Catálogo", f"Tipos guardados para {rfc}. (Recuerda guardar el catálogo y/o reprocesar)")
 
     def save_diot(self):
-        out = filedialog.asksaveasfilename(
-            defaultextension=".csv",
-            initialfile=f"DIOT_{self.periodo.get().strip()}.csv",
-            filetypes=[("CSV","*.csv")])
+        out = filedialog.asksaveasfilename(defaultextension=".csv",
+                                           initialfile=f"DIOT_{self.periodo.get().strip()}.csv",
+                                           filetypes=[("CSV","*.csv")])
         if not out: return
-        export_diot_csv(out, self.result_rows)
-        messagebox.showinfo("Exportar DIOT", f"Guardado: {out}")
+        export_diot_csv(out, self.result_rows); messagebox.showinfo("Exportar DIOT", f"Guardado: {out}")
 
     def save_pendientes(self):
         out = filedialog.asksaveasfilename(defaultextension=".csv",
                                            initialfile="pendientes.csv",
                                            filetypes=[("CSV","*.csv")])
         if not out: return
-        export_pendientes_csv(out, self.pendientes)
-        messagebox.showinfo("Pendientes", f"Guardado: {out}")
+        export_pendientes_csv(out, self.pendientes); messagebox.showinfo("Pendientes", f"Guardado: {out}")
 
     def save_catalog_json(self):
-        path = (self.json_path.get().strip()
-                or filedialog.asksaveasfilename(defaultextension=".json",
+        """Guardar el catálogo en el JSON actual o pedir ruta si no hay."""
+        path = self.json_path.get().strip()
+        if not path:
+            path = filedialog.asksaveasfilename(defaultextension=".json",
                                                 initialfile="catalogo_actualizado.json",
-                                                filetypes=[("JSON","*.json")]))
+                                                filetypes=[("JSON","*.json")])
         if not path: return
-        save_catalog(path, self.catalog)
-        messagebox.showinfo("Catálogo", f"Guardado: {path}")
+        try:
+            save_catalog(path, self.catalog)
+            self.json_path.set(path)
+            messagebox.showinfo("Catálogo", f"Guardado: {path}")
+        except Exception as e:
+            messagebox.showerror("Catálogo", f"No se pudo guardar:\n{e}")
 
     def add_rfc_to_selected(self):
+        """Agregar RFC para un proveedor pendiente y actualizar catálogo."""
         sel = self.treePend.selection()
         if not sel:
             messagebox.showinfo("Pendientes", "Selecciona un proveedor en la lista de pendientes.")
@@ -607,11 +579,18 @@ class DIOTApp(tk.Tk):
         if not (12 <= len(rfc) <= 16):
             if not messagebox.askyesno("RFC", "Formato de RFC no luce válido. ¿Agregar de todos modos?"):
                 return
+
+        # subir a catálogo
         upsert_catalog_fields(self.catalog, rfc, nombre_original=nombre, alias_to_add=nombre)
-        # Oculta la fila de pendientes seleccionada; el reproceso agrupará por RFC
-        self.treePend.delete(sel[0])
         self.btn_save_catalog.config(state="normal")
-        self.set_status("RFC agregado. Reprocesa.")
+
+        # quitar de pendientes UI
+        self.treePend.delete(sel[0])
+
+        # también de la estructura interna
+        self._remove_pending_by_nombre(nombre)
+
+        messagebox.showinfo("Pendientes", "RFC agregado. Reprocesa para que se agrupe en DIOT.")
 
 if __name__ == "__main__":
     DIOTApp().mainloop()
