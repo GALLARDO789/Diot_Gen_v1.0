@@ -1,0 +1,96 @@
+[
+  {
+    "rfc": "EAV000101AAA",
+    "nombre_legal": "Estrada & Valdivia S.C.",
+    "aliases": [
+      "e v",
+      "estrada valdivia",
+      "estrada y valdivia"
+    ],
+    "tipoTercero": "04",
+    "tipoOperacion": "85"
+  },
+  {
+    "rfc": "TME920101AB1",
+    "nombre_legal": "Tamex, S.A. de C.V.",
+    "aliases": [
+      "tamex sa",
+      "tamex s a c v",
+      "tamex"
+    ],
+    "tipoTercero": "04",
+    "tipoOperacion": "85"
+  },
+  {
+    "rfc": "ROZA720627DM1",
+    "nombre_legal": "ANA MARIA RODRIGUEZ ZAVALA",
+    "aliases": [
+      "ana maria rodriguez zavala"
+    ],
+    "tipoTercero": "04",
+    "tipoOperacion": "85"
+  },
+  {
+    "rfc": "BBA830831LJ2",
+    "nombre_legal": "APLICACION DE ANTICIPO DE COMISIONES BANCARIAS",
+    "aliases": [
+      "aplicacion anticipo comisiones bancarias"
+    ],
+    "tipoTercero": "04",
+    "tipoOperacion": "85"
+  },
+  {
+    "rfc": "ILC201029EH4",
+    "nombre_legal": "CHRISALIM ABASTECEDORA DE PRODUCTOS DE LIMPIEZA",
+    "aliases": [
+      "chrisalim abastecedora productos limpieza"
+    ],
+    "tipoTercero": "04",
+    "tipoOperacion": "85"
+  },
+  {
+    "rfc": "CCR201029739",
+    "nombre_legal": "COMER CHRIS",
+    "aliases": [
+      "comer chris"
+    ],
+    "tipoTercero": "04",
+    "tipoOperacion": "85"
+  },
+  {
+    "rfc": "GABC801214KM7",
+    "nombre_legal": "CARLOS GARCIA BAEZ",
+    "aliases": [
+      "carlos garcia baez"
+    ],
+    "tipoTercero": "04",
+    "tipoOperacion": "85"
+  },
+  {
+    "rfc": "CMA831005SG1",
+    "nombre_legal": "CASA DE PAPELERIA M",
+    "aliases": [
+      "casa papeleria m"
+    ],
+    "tipoTercero": "04",
+    "tipoOperacion": "85"
+  },
+  {
+    "rfc": "CYB080602JSA",
+    "nombre_legal": "CYBERPUERTA",
+    "aliases": [
+      "cyberpuerta"
+    ],
+    "tipoTercero": "04",
+    "tipoOperacion": "85"
+  },
+  {
+    "rfc": "DMA980313MW7",
+    "nombre_legal": "DC MAYORISTA",
+    "aliases": [
+      "dc mayorista"
+    ],
+    "tipoTercero": "04",
+    "tipoOperacion": "85"
+  }
+]
